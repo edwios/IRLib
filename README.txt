@@ -1,3 +1,5 @@
+This fork is aimed to make this library compatible with the Spark Core from spark.io
+
 IRLib – an Arduino library for infrared encoding and decoding
 Version 1.32 January 2014
 Copyright 2013, 2014 by Chris Young http://cyborg5.com

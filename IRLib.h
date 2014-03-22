@@ -29,7 +29,12 @@
 
 #ifndef IRLib_h
 #define IRLib_h
+#ifdef STM32F10X_MD
+#include <spark_wiring_interrupts.h>
+#define F(arg) (arg)
+#else
 #include <Arduino.h>
+#endif
 
 // The following are compile-time library options.
 // If you change them, recompile the library.
@@ -61,8 +66,9 @@ typedef char IRTYPES; //formerly was an enum
 #define HASH_CODE 8
 #define LAST_PROTOCOL HASH_CODE
 
+#ifdef TRACE
 const __FlashStringHelper *Pnames(IRTYPES Type); //Returns a character string that is name of protocol.
-
+#endif
 // Base class for decoding raw results
 class IRdecodeBase
 {

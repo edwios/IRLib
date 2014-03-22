@@ -38,9 +38,12 @@
 #define IRLibTimer_h
 
 #if defined(ARDUINO) && ARDUINO >= 100
-#include "Arduino.h"
-#else
-#include "WProgram.h"
+#include <Arduino.h>
+#elif defined(STM32F10X_MD)
+#include <spark_wiring.h>
+#include <spark_wiring_usbserial.h>
+#else 
+#include <WProgram.h>
 #endif
 
 // Arduino Mega
@@ -81,6 +84,10 @@
   //#define IR_USE_TIMER1   // tx = pin 13
   #define IR_USE_TIMER2     // tx = pin 14
   
+// Spark Core
+#elif defined(STM32F10X_MD)
+  #define IR_USE_TIMER_STM
+
 // Arduino Duemilanove, Diecimila, LilyPad, Mini, Fio, etc
 #else
   //#define IR_USE_TIMER1   // tx = pin 9
@@ -297,10 +304,53 @@
 #endif
 
 
+#elif defined(IR_USE_TIMER_STM)
+#define TIMER_RESET           digitalWrite(D7,HIGH)
+#define TIMER_ENABLE_PWM      digitalWrite(D7,HIGH)
+#define TIMER_DISABLE_PWM     digitalWrite(D7,HIGH)
+#define TIMER_ENABLE_INTR     ({ \
+  NVIC_InitTypeDef NVIC_InitStructure; \
+  NVIC_InitStructure.NVIC_IRQChannel = TIM4_IRQn; \
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0; \
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0; \
+  NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE; \
+  NVIC_Init(&NVIC_InitStructure); \
+  TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE); \
+})
+#define TIMER_DISABLE_INTR    ({ \
+  NVIC_InitTypeDef NVIC_InitStructure; \
+  NVIC_InitStructure.NVIC_IRQChannel = TIM4_IRQn; \
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0; \
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0; \
+  NVIC_InitStructure.NVIC_IRQChannelCmd = DISABLE; \
+  NVIC_Init(&NVIC_InitStructure); \ 
+  TIM_ITConfig(TIM2, TIM_IT_Update, DISABLE); \
+})
+#define TIMER_INTR_NAME       10
+#define TIMER_CONFIG_KHZ(val) ({ \
+  TIM4->PSC = 71; \
+  TIM4->EGR = 1; \
+  TIM4->ARR = 99; \
+  TIM4->CCR2 = 50; \
+})
+#define TIMER_CONFIG_NORMAL() ({ \
+  TIM4->PSC = 71; \
+  TIM4->EGR = 1; \
+  TIM4->ARR = 99; \
+  TIM4->CCR2 = 50; \
+})
+#define TIMER_PWM_PIN         D7
+
+#define cli()
+#define sei()
+
 #else // unknown timer
 #error "Internal code configuration error, no known IR_USE_TIMER# defined\n"
 #endif
 
+#ifdef STM32F10X_MD
+#define CORE_LED0_PIN D7
+#endif
 
 // defines for blinking the LED
 #if defined(CORE_LED0_PIN)

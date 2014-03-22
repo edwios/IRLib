@@ -30,19 +30,24 @@
 #include "IRLib.h"
 #include "IRLibMatch.h"
 #include "IRLibRData.h"
+#ifndef STM32F10X_MD
 #include <Arduino.h>
+#endif
+
+#include "IRLibTimer.h"
 
 volatile irparams_t irparams;
 /*
  * Returns a pointer to a flash stored string that is the name of the protocol received. 
  */
+#ifdef TRACE
 const __FlashStringHelper *Pnames(IRTYPES Type) {
   if(Type>LAST_PROTOCOL) Type=UNKNOWN;
   // You can add additional strings before the entry for hash code.
   const __FlashStringHelper *Names[LAST_PROTOCOL+1]={F("Unknown"),F("NEC"),F("Sony"),F("RC5"),F("RC6"),F("Panasonic Old"),F("JVC"),F("NECx"),F("Hash Code")};
   return Names[Type];
 };
-
+#endif
 
 #define TOPBIT 0x80000000
 
@@ -87,7 +92,7 @@ void IRsendBase::sendGeneric(unsigned long data, unsigned char Num_Bits, unsigne
   if(Use_Stop) mark(Mark_One);   //stop bit of "1"
   if(Max_Extent) {
 #ifdef TRACE
-    Serial.print("Max_Extent="); Serial.println(Max_Extent);
+  Serial.print("Max_Extent="); Serial.println(Max_Extent);
 	Serial.print("Extent="); Serial.println(Extent);
 	Serial.print("Difference="); Serial.println(Max_Extent-Extent);
 #endif
@@ -301,7 +306,10 @@ void IRdecodeBase::Reset(void) {
 void IRdecodeBase::DumpResults(void) {
   int i;unsigned long Extent;int interval;
   if(decode_type<=LAST_PROTOCOL){
-    Serial.print(F("Decoded ")); Serial.print(Pnames(decode_type));
+    Serial.print(F("Decoded "));
+    #ifdef TRACE
+    Serial.print(Pnames(decode_type));
+    #endif
     Serial.print(F(": Value:")); Serial.print(value, HEX);
   };
   Serial.print(F(" ("));  Serial.print(bits, DEC); Serial.println(F(" bits)"));
@@ -840,7 +848,9 @@ bool IRrecvPCI::GetResults(IRdecodeBase *decoder) {
  * new protocols or improving the receiving, decoding and sending of protocols.
  */
 // Provides ISR
+#ifndef STM32F10X_MD
 #include <avr/interrupt.h>
+#endif
 // defines for setting and clearing register bits
 #ifndef cbi
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
@@ -857,7 +867,6 @@ bool IRrecvPCI::GetResults(IRdecodeBase *decoder) {
 #define PRESCALE 8      // timer clock prescale
 #define CLKSPERUSEC (SYSCLOCK/PRESCALE/1000000)   // timer clocks per microsecond
 
-#include <IRLibTimer.h>
 
 /* 
  * This section contains the hardware specific portions of IRrecvBase
@@ -928,8 +937,19 @@ bool IRrecv::GetResults(IRdecodeBase *decoder) {
  * As soon as a SPACE gets long, ready is set, state switches to IDLE, timing of SPACE continues.
  * As soon as first MARK arrives, gap width is recorded, ready is cleared, and new logging starts.
  */
+#ifndef STM32F10X_MD
 ISR(TIMER_INTR_NAME)
+#else
+extern "C" void TIM4_IRQHandler(void)
+#endif
 {
+
+#ifdef STM32F10X_MD
+  if (TIM_GetITStatus(TIM4, TIM_IT_Update) != RESET)
+  {
+    TIM_ClearITPendingBit(TIM4, TIM_IT_Update); //Clear the interrupt bit 
+#endif
+
   TIMER_RESET;
   enum irdata_t {IR_MARK=0, IR_SPACE=1};
   irdata_t irdata = (irdata_t)digitalRead(irparams.recvpin);
@@ -984,6 +1004,10 @@ ISR(TIMER_INTR_NAME)
     break;
   }
   do_Blink();
+
+#ifdef STM32F10X_MD
+  }
+#endif
 }
 
 /*
