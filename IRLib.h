@@ -1,4 +1,4 @@
-/* IRLib.h from IRLib – an Arduino library for infrared encoding and decoding
+/* IRLib.h from IRLib â€“ an Arduino library for infrared encoding and decoding
  * Version 1.3   January 2014
  * Copyright 2014 by Chris Young http://cyborg5.com
  *
@@ -27,14 +27,19 @@
  * Also influenced by http://zovirl.com/2008/11/12/building-a-universal-remote-with-an-arduino/
  */
 
+
 #ifndef IRLib_h
 #define IRLib_h
 #ifdef STM32F10X_MD
 #include <spark_wiring_interrupts.h>
-#define F(arg) (arg)
+//#define F(arg) (arg)
 #else
 #include <Arduino.h>
 #endif
+#include "application.h"
+#include "SparkIntervalTimer.h"
+
+//#define TRACE
 
 // The following are compile-time library options.
 // If you change them, recompile the library.
@@ -54,6 +59,7 @@
 #define RAWBUF 100 // Length of raw duration buffer (cannot exceed 255)
 
 typedef char IRTYPES; //formerly was an enum
+
 #define UNKNOWN 0
 #define NEC 1
 #define SONY 2
@@ -66,6 +72,9 @@ typedef char IRTYPES; //formerly was an enum
 #define HASH_CODE 8
 #define LAST_PROTOCOL HASH_CODE
 
+#define PWM_FREQ 38000 // in Hertz (38kHz)
+
+const char *Pnames(IRTYPES Type); //Returns a character string that is name of protocol.
 #ifdef TRACE
 const __FlashStringHelper *Pnames(IRTYPES Type); //Returns a character string that is name of protocol.
 #endif
@@ -84,6 +93,7 @@ public:
   bool decodeGeneric(unsigned char Raw_Count, unsigned int Head_Mark, unsigned int Head_Space, 
                      unsigned int Mark_One, unsigned int Mark_Zero, unsigned int Space_One, unsigned int Space_Zero);
   virtual void DumpResults (void);
+  virtual void DumpResults2 (void);
   void UseExtnBuf(void *P); //Normally uses same rawbuf as IRrecv. Use this to define your own buffer.
   void copyBuf (IRdecodeBase *source);//copies rawbuf and rawlen from one decoder to another
 protected:
@@ -168,6 +178,7 @@ public virtual IRdecodeNECx
 {
 public:
   virtual bool decode(void);    // Calls each decode routine individually
+  virtual int decodeAndId(void);    // Calls each decode routine individually and return the ID of the routine used
 };
 
 //Base class for sending signals
@@ -183,6 +194,8 @@ protected:
   VIRTUAL void mark(unsigned int usec);
   VIRTUAL void space(unsigned int usec);
   unsigned long Extent;
+  void analogWrite2(uint16_t pin, uint8_t value);
+  void digitalWrite2(uint16_t pin, uint8_t value);
 };
 
 class IRsendNEC: public virtual IRsendBase
@@ -248,6 +261,8 @@ public:
   void send(IRTYPES Type, unsigned long data, unsigned int data2);
 };
 
+//extern void Wiring_TIM4_Interrupt_Handler_override();
+
 // Changed this to a base class so it can be extended
 class IRrecvBase
 {
@@ -265,10 +280,10 @@ protected:
   void Init(void);
 };
 
-/* Original IRrecv class uses 50µs interrupts to sample input. While this is generally
+/* Original IRrecv class uses 50Âµs interrupts to sample input. While this is generally
  * accurate enough for everyday purposes, it may be difficult to port to other
  * hardware unless you know a lot about hardware timers and interrupts. Also
- * when trying to analyze unknown protocols, the 50µs granularity may not be sufficient.
+ * when trying to analyze unknown protocols, the 50Âµs granularity may not be sufficient.
  * In that case use either the IRrecvLoop or the IRrecvPCI class.
  */
 class IRrecv: public IRrecvBase
@@ -276,7 +291,8 @@ class IRrecv: public IRrecvBase
 public:
   IRrecv(unsigned char recvpin):IRrecvBase(recvpin){};
   bool GetResults(IRdecodeBase *decoder);
-  void enableIRIn(void);
+//  void enableIRIn(void);
+  bool enableIRIn(void);
   void resume(void);
 };
 /* This receiver uses no interrupts or timers. Other interrupt driven receivers
@@ -296,7 +312,7 @@ public:
 };
 
 /* This receiver uses the pin change hardware interrupt to detect when your input pin
- * changes state. It gives more detailed results than the 50µs interrupts of IRrecv
+ * changes state. It gives more detailed results than the 50Âµs interrupts of IRrecv
  * and theoretically is more accurate than IRrecvLoop. However because it only detects
  * pin changes, it doesn't always know when it's finished. GetResults attempts to detect
  * a long gap of space but sometimes the next signal gets there before GetResults notices.
@@ -316,6 +332,21 @@ private:
   unsigned char intrnum;
 };
 
+bool interruptSetup();
+void irISR(void);
+
+#define CORE_LED0_PIN         D4
+#define TIMER_PWM_PIN         A6
+#define TIMER_RESET           
+#define TIMER_ENABLE_PWM      analogWrite2(TIMER_PWM_PIN,128)
+#define TIMER_DISABLE_PWM     analogWrite2(TIMER_PWM_PIN,0)
+
+// defines for blinking the LED
+#if defined(CORE_LED0_PIN)
+#define BLINKLED       CORE_LED0_PIN
+#define BLINKLED_ON()  (digitalWrite(CORE_LED0_PIN, HIGH))
+#define BLINKLED_OFF() (digitalWrite(CORE_LED0_PIN, LOW))
+#endif
 
 //Do the actual blinking off and on
 //This is not part of IRrecvBase because it may need to be inside an ISR
