@@ -34,7 +34,7 @@
 #include <Arduino.h>
 #endif
 
-#include "IRLibTimer.h"
+#include "SparkIntervalTimer.h"
 
 volatile irparams_t irparams;
 /*
@@ -50,6 +50,17 @@ const __FlashStringHelper *Pnames(IRTYPES Type) {
 #endif
 
 #define TOPBIT 0x80000000
+
+IntervalTimer pulseTimer;
+uint16_t TIM_ARR = 0;
+
+
+bool interruptSetup(void){
+//  Serial.println("Starting up timer");
+  // Allocate a timer to throw an interrupt every 2mS.
+  return (pulseTimer.begin(irISR, 50, uSec));  // blinkLED to run every 50us (50 * 1us period)
+}
+
 
 /*
  * The IRsend classes contain a series of methods for sending various protocols.
@@ -75,6 +86,8 @@ void IRsendBase::sendGeneric(unsigned long data, unsigned char Num_Bits, unsigne
                              unsigned int Mark_One, unsigned int Mark_Zero, unsigned int Space_One, unsigned int Space_Zero, 
 							 unsigned char kHz, bool Use_Stop, unsigned long Max_Extent) {
   Extent=0;
+  uint16_t xm0, xm1, xm2, xm3, xm4  = 0;
+
   data = data << (32 - Num_Bits);
   enableIROut(kHz);
 //Some protocols do not send a header when sending repeat codes. So we pass a zero value to indicate skipping this.
@@ -82,7 +95,7 @@ void IRsendBase::sendGeneric(unsigned long data, unsigned char Num_Bits, unsigne
   if(Head_Space) space(Head_Space);
   for (int i = 0; i <Num_Bits; i++) {
     if (data & TOPBIT) {
-      mark(Mark_One);  space(Space_One);
+      mark(Mark_One); space(Space_One); 
     } 
     else {
       mark(Mark_Zero);  space(Space_Zero);
@@ -98,7 +111,9 @@ void IRsendBase::sendGeneric(unsigned long data, unsigned char Num_Bits, unsigne
 #endif
 	space(Max_Extent-Extent); 
 	}
-	else space(Space_One);
+	else {
+    space(Space_One);
+  }
 };
 
 void IRsendNEC::send(unsigned long data)
@@ -303,6 +318,7 @@ void IRdecodeBase::Reset(void) {
 /*
  * This method dumps useful information about the decoded values.
  */
+
 void IRdecodeBase::DumpResults(void) {
   int i;unsigned long Extent;int interval;
   if(decode_type<=LAST_PROTOCOL){
@@ -338,6 +354,38 @@ void IRdecodeBase::DumpResults(void) {
     if ((j % 32)==1)Serial.println();
   }
   Serial.println();
+  Serial.print(F("Extent="));  Serial.println(Extent,DEC);
+  Serial.print(F("Mark  min:")); Serial.print(LowMark,DEC);Serial.print(F("\t max:")); Serial.println(HiMark,DEC);
+  Serial.print(F("Space min:")); Serial.print(LowSpace,DEC);Serial.print(F("\t max:")); Serial.println(HiSpace,DEC);
+  Serial.println();
+}
+
+void IRdecodeBase::DumpResults2(void) {
+  int i;unsigned long Extent;int interval;
+  if(decode_type<=LAST_PROTOCOL){
+    Serial.print(F("Decoded "));
+    Serial.print(F(": Value:")); Serial.print(value, HEX);
+  };
+  Serial.print(F(" ("));  Serial.print(bits, DEC); Serial.println(F(" bits)"));
+  Serial.print(F("Raw samples(")); Serial.print(rawlen, DEC);
+  Serial.print(F("): Gap:")); Serial.println(rawbuf[0], DEC);
+  Serial.print(F("  {")); Serial.print(rawbuf[1], DEC);
+  Serial.print(F(",")); Serial.print(rawbuf[2], DEC);
+  int LowSpace= 32767; int LowMark=  32767;
+  int HiSpace=0; int HiMark=  0;
+  Extent=rawbuf[1]+rawbuf[2];
+  for (i = 3; i < rawlen; i++) {
+    Extent+=(interval= rawbuf[i]);
+    if (i % 2) {
+      LowMark=min(LowMark, interval);  HiMark=max(HiMark, interval);
+    } 
+    else {
+       if(interval>0)LowSpace=min(LowSpace, interval);  HiSpace=max (HiSpace, interval);
+    }
+    Serial.print(","); Serial.print(interval, DEC);
+    int j=i-1;
+  }
+  Serial.println("}");
   Serial.print(F("Extent="));  Serial.println(Extent,DEC);
   Serial.print(F("Mark  min:")); Serial.print(LowMark,DEC);Serial.print(F("\t max:")); Serial.println(HiMark,DEC);
   Serial.print(F("Space min:")); Serial.print(LowSpace,DEC);Serial.print(F("\t max:")); Serial.println(HiSpace,DEC);
@@ -423,6 +471,21 @@ bool IRdecode::decode(void) {
 // you want to know a hash code you can call IRhash::decode() yourself.
 // BTW This is another reason we separated IRrecv from IRdecode.
   return false;
+}
+
+int IRdecode::decodeAndId(void) {
+  if (IRdecodeNEC::decode()) return 1;
+  if (IRdecodeSony::decode()) return 2;
+  if (IRdecodeRC5::decode()) return 3;
+  if (IRdecodeRC6::decode()) return 4;
+  if (IRdecodePanasonic_Old::decode()) return 5;
+  if (IRdecodeNECx::decode()) return 6;
+  if (IRdecodeJVC::decode()) return 7;
+//if (IRdecodeADDITIONAL::decode()) return true;//add additional protocols here
+//Deliberately did not add hash code decoding. If you get decode_type==UNKNOWN and
+// you want to know a hash code you can call IRhash::decode() yourself.
+// BTW This is another reason we separated IRrecv from IRdecode.
+  return 0;
 }
 
 #define NEC_RPT_SPACE	2250
@@ -756,7 +819,7 @@ bool IRrecvLoop::GetResults(IRdecodeBase *decoder) {
 }
 
 /* This receiver uses the pin change hardware interrupt to detect when your input pin
- * changes state. It gives more detailed results than the 50µs interrupts of IRrecv
+ * changes state. It gives more detailed results than the 50Âµs interrupts of IRrecv
  * and theoretically is more accurate than IRrecvLoop. However because it only detects
  * pin changes, it doesn't always know when it's finished. GetResults attempts to detect
  * a long gap of space but sometimes the next signal gets there before GetResults notices.
@@ -892,6 +955,7 @@ void IRrecvBase::blink13(bool blinkflag)
 //This is not part of IRrecvBase because it may need to be inside an ISR
 //and we cannot pass parameters to them.
 void do_Blink(void) {
+//  irparams.blinkflag = !irparams.blinkflag; // DEBUG only
   if (irparams.blinkflag) {
     if(irparams.rawlen % 2) {
       BLINKLED_ON();  // turn pin 13 LED on
@@ -903,7 +967,7 @@ void do_Blink(void) {
 }
 
 /*
- * The original IRrecv which uses 50µs timer driven interrupts to sample input pin.
+ * The original IRrecv which uses 50Âµs timer driven interrupts to sample input pin.
  */
 void IRrecv::resume() {
   // initialize state machine variables
@@ -911,14 +975,29 @@ void IRrecv::resume() {
   IRrecvBase::resume();
 }
 
+/*
 void IRrecv::enableIRIn(void) {
   IRrecvBase::enableIRIn();
   // setup pulse clock timer interrupt
-  cli();
+  noInterrupts();
+  interruptSetup();
+///  TIMER_CONFIG_NORMAL();
+//  TIMER_ENABLE_INTR;
+//  TIMER_RESET;
+  interrupts();
+}
+*/
+
+bool IRrecv::enableIRIn(void) {
+  bool status = false;
+
+  IRrecvBase::enableIRIn();
+  // setup pulse clock timer interrupt
+  status = interruptSetup();
   TIMER_CONFIG_NORMAL();
   TIMER_ENABLE_INTR;
   TIMER_RESET;
-  sei();
+  return status;
 }
 
 bool IRrecv::GetResults(IRdecodeBase *decoder) {
@@ -937,22 +1016,24 @@ bool IRrecv::GetResults(IRdecodeBase *decoder) {
  * As soon as a SPACE gets long, ready is set, state switches to IDLE, timing of SPACE continues.
  * As soon as first MARK arrives, gap width is recorded, ready is cleared, and new logging starts.
  */
-#ifndef STM32F10X_MD
-ISR(TIMER_INTR_NAME)
-#else
-extern "C" void TIM4_IRQHandler(void)
-#endif
-{
 
-#ifdef STM32F10X_MD
-  if (TIM_GetITStatus(TIM4, TIM_IT_Update) != RESET)
-  {
-    TIM_ClearITPendingBit(TIM4, TIM_IT_Update); //Clear the interrupt bit 
-#endif
+ 
+///#ifndef STM32F10X_MD
+//ISR(TIMER_INTR_NAME)
+//#else
 
-  TIMER_RESET;
+//extern "C" void TIM4_IRQHandler()
+void irISR(void) {
+
   enum irdata_t {IR_MARK=0, IR_SPACE=1};
   irdata_t irdata = (irdata_t)digitalRead(irparams.recvpin);
+  /* DEBUG: Mirror input
+  if (irdata == 1) {
+    digitalWrite(D4,HIGH);
+  } else {
+    digitalWrite(D4,LOW);    
+  }
+  */
   irparams.timer++; // One more 50us tick
   if (irparams.rawlen >= RAWBUF) {
     // Buffer overflow
@@ -1004,10 +1085,6 @@ extern "C" void TIM4_IRQHandler(void)
     break;
   }
   do_Blink();
-
-#ifdef STM32F10X_MD
-  }
-#endif
 }
 
 /*
@@ -1028,15 +1105,24 @@ void IRsendBase::enableIROut(unsigned char khz) {
   // See my Secrets of Arduino PWM at http://www.righto.com/2009/07/secrets-of-arduino-pwm.html for details.
   
   // Disable the Timer2 Interrupt (which is used for receiving IR)
- TIMER_DISABLE_INTR; //Timer2 Overflow Interrupt    
- pinMode(TIMER_PWM_PIN, OUTPUT);  
- digitalWrite(TIMER_PWM_PIN, LOW); // When not sending PWM, we want it low    
- TIMER_CONFIG_KHZ(khz);
- }
+ ///noInterrupts(); //Timer2 Overflow Interrupt  
+  TIMER_DISABLE_INTR;
+  TIM_ARR = (uint16_t)(24000 / (khz)) - 1;
+  pinMode(TIMER_PWM_PIN, OUTPUT);  
+  analogWrite2(TIMER_PWM_PIN, 128);
+  pinMode(TIMER_PWM_PIN, AF_OUTPUT_PUSHPULL);
+  space(0);
+  delay(100);
+// digitalWrite(TIMER_PWM_PIN, LOW); // When not sending PWM, we want it low    
+ //TIMER_CONFIG_KHZ(khz);
+}
 
 IRsendBase::IRsendBase () {
- pinMode(TIMER_PWM_PIN, OUTPUT);  
- digitalWrite(TIMER_PWM_PIN, LOW); // When not sending PWM, we want it low    
+  TIM_ARR = (uint16_t)(24000000 / TIM_PWM_FREQ) - 1;
+  pinMode(TIMER_PWM_PIN, OUTPUT);  
+  analogWrite2(TIMER_PWM_PIN, 128);
+  pinMode(TIMER_PWM_PIN, AF_OUTPUT_PUSHPULL);
+  space(0);
 }
 
 //The Arduino built in function delayMicroseconds has limits we wish to exceed
@@ -1055,6 +1141,114 @@ void IRsendBase::space(unsigned int time) {
  TIMER_DISABLE_PWM;
  My_delay_uSecs(time);
  Extent+=time;
+}
+
+void IRsendBase::analogWrite2(uint16_t pin, uint8_t value) {
+  TIM_OCInitTypeDef TIM_OCInitStructure;
+
+  if (pin >= TOTAL_PINS || PIN_MAP[pin].timer_peripheral == NULL) {
+    return;
+  }
+  // SPI safety check
+  if (SPI.isEnabled() == true && (pin == SCK || pin == MOSI || pin == MISO)) {
+    return;
+  }
+  // I2C safety check
+  if (Wire.isEnabled() == true && (pin == SCL || pin == SDA)) {
+    return;
+  }
+  // Serial1 safety check
+  if (Serial1.isEnabled() == true && (pin == RX || pin == TX)) {
+    return;
+  }
+  if (PIN_MAP[pin].pin_mode != OUTPUT && PIN_MAP[pin].pin_mode != AF_OUTPUT_PUSHPULL) {
+    return;
+  }
+
+  TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
+ 
+  //PWM Frequency : PWM_FREQ (Hz)
+  uint16_t TIM_Prescaler = (uint16_t)(SystemCoreClock / 24000000) - 1; //TIM Counter clock = 24MHz
+//  uint16_t TIM_ARR = (uint16_t)(24000000 / TIM_PWM_FREQ) - 1;
+
+  // TIM Channel Duty Cycle(%) = (TIM_CCR / TIM_ARR + 1) * 100
+  uint16_t TIM_CCR = (uint16_t)(value * (TIM_ARR + 1) / 255);
+ 
+ 
+  // Don't re-init PWM and cause a glitch if already setup, just update duty cycle and return.
+  if (PIN_MAP[pin].pin_mode == AF_OUTPUT_PUSHPULL) {
+    TIM_OCInitStructure.TIM_Pulse = (uint16_t)(value * (TIM_ARR + 1) / 255);
+    if (PIN_MAP[pin].timer_ch == TIM_Channel_1) {
+      PIN_MAP[pin].timer_peripheral-> CCR1 = TIM_OCInitStructure.TIM_Pulse;
+    } else if (PIN_MAP[pin].timer_ch == TIM_Channel_2) {
+      PIN_MAP[pin].timer_peripheral-> CCR2 = TIM_OCInitStructure.TIM_Pulse;
+    } else if (PIN_MAP[pin].timer_ch == TIM_Channel_3) {
+      PIN_MAP[pin].timer_peripheral-> CCR3 = TIM_OCInitStructure.TIM_Pulse;
+    } else if (PIN_MAP[pin].timer_ch == TIM_Channel_4) {
+      PIN_MAP[pin].timer_peripheral-> CCR4 = TIM_OCInitStructure.TIM_Pulse;
+    }
+    return;
+  }
+ 
+
+  // AFIO clock enable
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
+
+  //pinMode(pin, AF_OUTPUT_PUSHPULL); // we need to do this manually else we get a glitch
+ 
+  // TIM clock enable
+  if (PIN_MAP[pin].timer_peripheral == TIM2)
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
+  else if (PIN_MAP[pin].timer_peripheral == TIM3)
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
+  else if (PIN_MAP[pin].timer_peripheral == TIM4)
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
+ 
+  // Time base configuration
+  TIM_TimeBaseStructure.TIM_Period = TIM_ARR;
+  TIM_TimeBaseStructure.TIM_Prescaler = TIM_Prescaler;
+  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+ 
+  TIM_TimeBaseInit(PIN_MAP[pin].timer_peripheral, & TIM_TimeBaseStructure);
+ 
+  // PWM1 Mode configuration
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
+  TIM_OCInitStructure.TIM_Pulse = TIM_CCR;
+ 
+  if (PIN_MAP[pin].timer_ch == TIM_Channel_1) {
+    // PWM1 Mode configuration: Channel1
+    TIM_OC1Init(PIN_MAP[pin].timer_peripheral, & TIM_OCInitStructure);
+    TIM_OC1PreloadConfig(PIN_MAP[pin].timer_peripheral, TIM_OCPreload_Enable);
+  } else if (PIN_MAP[pin].timer_ch == TIM_Channel_2) {
+    // PWM1 Mode configuration: Channel2
+    TIM_OC2Init(PIN_MAP[pin].timer_peripheral, & TIM_OCInitStructure);
+    TIM_OC2PreloadConfig(PIN_MAP[pin].timer_peripheral, TIM_OCPreload_Enable);
+  } else if (PIN_MAP[pin].timer_ch == TIM_Channel_3) {
+    // PWM1 Mode configuration: Channel3
+    TIM_OC3Init(PIN_MAP[pin].timer_peripheral, & TIM_OCInitStructure);
+    TIM_OC3PreloadConfig(PIN_MAP[pin].timer_peripheral, TIM_OCPreload_Enable);
+  } else if (PIN_MAP[pin].timer_ch == TIM_Channel_4) {
+    // PWM1 Mode configuration: Channel4
+    TIM_OC4Init(PIN_MAP[pin].timer_peripheral, & TIM_OCInitStructure);
+    TIM_OC4PreloadConfig(PIN_MAP[pin].timer_peripheral, TIM_OCPreload_Enable);
+  }
+ 
+  TIM_ARRPreloadConfig(PIN_MAP[pin].timer_peripheral, ENABLE);
+ 
+  // TIM enable counter
+  TIM_Cmd(PIN_MAP[pin].timer_peripheral, ENABLE);
+}
+
+void IRsendBase::digitalWrite2(uint16_t pin, uint8_t value) {
+  if (value == HIGH) {
+    analogWrite2(pin, 255);
+  }
+  if (value == LOW) {
+    analogWrite2(pin, 0);
+  }
 }
 
 /*
